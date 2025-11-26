@@ -1,168 +1,228 @@
-## Scriptures in JSON
+# Unified Scriptures SQLite Builder
 
-JSON editions of the LDS scriptures. Includes changes from the [2013 edition](https://www.lds.org/scriptures/new-edition?lang=eng).
+A reproducible, read-only SQLite edition of the LDS standard works, built from
+[`bcbooks/scriptures-json`](https://github.com/bcbooks/scriptures-json).
 
+This project stands on the shoulders of [Ben Crowder](https://github.com/bencrowder) and his excellent
+[`bcbooks/scriptures-json`](https://github.com/bcbooks/scriptures-json) repo. That project did the hard,
+careful work of producing clean, public-domain JSON editions of the scriptures; this repo focuses on
+turning that data into a navigation-friendly SQLite asset for apps and tools.
 
-### Contents
+## Why this exists
 
-- `book-of-mormon.json`: version 4 (bom-4)
-    - Includes original headings, title page, testimonies
-- `doctrine-and-covenants.json`: version 3 (dc-3)
-    - Does not include introduction (under copyright) or official declarations (OD 2 came out in 1978 and is under copyright)
-- `pearl-of-great-price.json`: version 3 (pgp-3)
-    - Includes the facsimiles
-    - Does not include introduction (under copyright)
-- `old-testament.json`: version 1 (ot-1)
-    - KJV
-    - Does not include JST
-- `new-testament.json`: version 1 (nt-1)
-    - KJV
-    - Does not include JST
-- `flat/*`: flat editions, only includes headings and verses
-    - `flat/book-of-mormon-flat.json`: version 2 (source bom-4)
-    - `flat/doctrine-and-covenants-flat.json`: version 2 (source dc-3)
-    - `flat/pearl-of-great-price-flat.json`: version 2 (source pgp-3)
-    - `flat/old-testament-flat.json`: version 1 (source ot-1)
-    - `flat/new-testament-flat.json`: version 1 (source nt-1)
-- `reference/*`: reference editions, with books, chapter numbers, and verse numbers as keys, only includes headings and verses
-    - `reference/book-of-mormon-reference.json`: version 2 (source bom-4)
-    - `reference/doctrine-and-covenants-reference.json`: version 2 (source dc-3)
-    - `reference/pearl-of-great-price-reference.json`: version 2 (source pgp-3)
-    - `reference/old-testament-reference.json`: version 1 (source ot-1)
-    - `reference/new-testament-reference.json`: version 1 (source nt-1)
-- `scripts/*`: Python scripts for exporting flat and reference editions
+I used scriptures-json on a project a few years ago. I ended up writing a decent chunk of code to be able to parse through everything. 
 
+More recently, I began using a sqlite file from the Mormon Documentation Project, which scriptures-json is based on. I loved how simple it was to query information from the database (plus really fast!), but it was missing a lot of the metadata and even some text that scripture-json included.
 
-### Notes
+This project is an attempt to marry the two projects and get the best of both worlds: full, rich scripture text, and ease of access.
 
-- These JSON editions do not include copyrighted material (footnotes, chapter summaries, the Book of Mormon introduction, etc.).
-- The Book of Mormon text comes from the [Mormon Documentation Project](http://scriptures.nephi.org/) SQLite file (from December 2011, though I compared the exported text to the latest 2013 version and there were no differences). I exported the text, added additional content (title page, the book/chapter headings that were in the original text, testimonies), and made the [adjustments](https://www.lds.org/scriptures/adjustments?lang=eng) from the [2013 edition](https://www.lds.org/scriptures/new-edition?lang=eng) (which are small enough in relation to the whole that they don't fall under copyright, being minor typographic fixes, not anything substantial).
-- The text for the Doctrine & Covenants, Pearl of Great Price, Old Testament, and New Testament comes from the 2013 version of the [Mormon Documentation Project](http://scriptures.nephi.org/) SQLite file. I exported the text, added title page information, and made the [2013 adjustments](https://www.lds.org/scriptures/adjustments?lang=eng).
-- The flat editions are intended for easy iteration through verses, for textual/linguistic analysis or other similar domains. Not included: title pages, testimonies, LDS.org slugs, etc.
-- The reference editions are intended for easy reference in code (`data['1 Nephi']['3']['7]`, for example). Not included: title pages, testimonies, LDS.org slugs, etc.
-- Typographical note: Small caps are rendered as all caps, and italics are not distinguished. (I'm still trying to figure out the best way to handle formatting. At this point, I'm leaning toward having a `formatted` property with a copy of the verse text, using some kind of XML for formatting -- `and it <i>came</i> to pass, saith the <smcp>Lord</smcp> God`, or something like that.) Curly quotes have been straightened, though I'm already having second thoughts about that.
+The upstream JSON files are great for many use cases:
 
+* They’re carefully edited and tracked.
+* They avoid copyrighted material (footnotes, chapter summaries, introductions, etc.) while retaining the
+  core text.
+* They’re easy to process with standard tooling.
 
-### License
+But production apps often need something slightly different:
 
-These files are in the public domain.
+* A **single, compact file** that can be shipped with a mobile or desktop app.
+* A **normalized schema** that makes it trivial to jump to “Mosiah 18:9”, iterate over verses, or stream an entire chapter/section with all its metadata in order.
+* A format that plays nicely with **ORMs and code generators** (Drizzle, Prizma, TypeORM, etc.) without custom per-app parsing.
 
+This repo is a small layer on top of `scriptures-json` that answers those needs: it turns the JSON source
+into a stable SQLite database with explicit tables for volumes, books, chapters, and a unified content
+stream.
 
-### Changelog
+## Why not just use `bcbooks/scriptures-json`?
 
-#### 2016-10-02 (the big one)
+`scriptures-json` is perfect when you want raw JSON organized by volume/book, but it leaves a lot of work
+to downstream consumers:
 
-- Book of Mormon version 4: 
-    - Straightens curly quotes
-    - 2 Nephi 4:23 — "night-time" -> "nighttime"
-    - 2 Nephi 16:13 — "teiltree" -> "teil tree"
-    - Omni 1:25 — "comes from the Lord;" -> "comes from the Lord:"
-    - Mosiah 13:12 — "Thou shall not make" -> "Thou shalt not make"
-    - Mosiah 16:5 — "Therefore, he is" -> "Therefore he is"
-    - Mosiah 23:29 — "came to pass the the Lord" -> "came to pass that the Lord"
-    - Mosiah 24:18 — "gathering the flocks together" -> "gathering their flocks together"
-    - Alma 10:2 — "it was the same Aminadi" -> "it was that same Aminadi"
-    - Alma 12:20 — "an immortal state that the soul" -> "an immortal state, that the soul"
-    - Alma 12:33 — "repent and harden not" -> "repent, and harden not"
-    - Alma 18:5 — "in a Great Spirit they supposed" -> "in a Great Spirit, they supposed"
-    - Alma 19:18 — "to their astonishment they beheld" -> "to their astonishment, they beheld"
-    - Alma 31:32 — "and also Amulek and Zeezrom" -> "and also Amulek and Zeezrom,"
-    - Alma 58:39 — "and the Lord had supported them" -> "and the Lord has supported them"
-    - Alma 62:50 — "and from all manner of afflictions and he" -> "and from all manner of afflictions, and he"
-    - Helaman 6:10 — "land south was called Lehi and the land" -> "land south was called Lehi, and the land"
-    - Helaman 7:2 — "in the land northward and did preach" -> "in the land northward, and did preach"
-    - 3 Nephi 3:15 — "no wise" -> "nowise"
-    - Mormon 5:5 — "And it came to pass" -> "But it came to pass"
-    - Ether 7:9 — "the city Nehor and gave" -> "the city Nehor, and gave"
-    - Ether 13:5 — "the house of Israel." -> "the house of Israel—"
-    - Moroni 3:3 — "or, if he be" -> "or if he be"
-- Doctrine & Covenants version 3
-    - Straightens curly quotes
-    - D&C 11:1 — "A Great and marvelous work" -> "A great and marvelous work"
-    - D&C 18:18 — "Ask the Father in my name, in faith believing" -> "Ask the Father in my name in faith, believing"
-    - D&C 20:12 — "today,and" -> "today, and"
-    - D&C 38:24 — "practise" -> "practice"
-    - D&C 43:1 — "O HEARKEN, ye elders" -> "O hearken, ye elders"
-    - D&C 46:33 — "practise" -> "practice"
-    - D&C 52:39 — "practised" -> "practiced"
-    - D&C 59:23 — "even peace in this world and eternal life" -> "even peace in this world, and eternal life"
-    - D&C 63:26 — "Caesar" -> "Cæsar" (2 instances)
-    - D&C 75:1 — "Verily, verily I say" -> "Verily, verily, I say"
-    - D&C 76:17 — "they who have done good in the resurrection" -> "they who have done good, in the resurrection"
-    - D&C 84:1 — "A REVELATION of Jesus Christ" -> "A revelation of Jesus Christ"
-    - D&C 98:25 — "hundred fold" -> "hundred-fold"
-    - D&C 102 — Added signature
-    - D&C 102:34 — "Martin Harris." -> "Martin Harris. After prayer the conference adjourned."
-    - D&C 103:21 — "Joseph Smith, Jun." -> "Joseph Smith, Jun.,"
-    - D&C 103:22 — "Joseph Smith, Jun." -> "Joseph Smith, Jun.,"
-    - D&C 107:30 — "long suffering" -> "long-suffering"
-    - D&C 109:34 — "and as all men sin forgive" -> "and as all men sin, forgive"
-    - D&C 111:1 — "I, THE Lord" -> "I, the Lord"
-    - D&C 112:30 — "the fulness of times." -> "the fulness of times,"
-    - D&C 121:1 — "O GOD, where art thou?" -> "O God, where are thou?"
-    - D&C 123:5 — "practised" -> "practiced"
-    - D&C 124:48 — "practise" -> "practice"
-    - D&C 124:71 — "fourfold" -> "four-fold"
-    - D&C 128:6 — "Revelation 20: 12" -> "Revelation 20:12"
-    - D&C 128:10 — "Matthew 16: 18" -> "Matthew 16:18"
-    - D&C 128:13 — "1 Corinthians 15: 46" -> "1 Corinthians 15:46"
-    - D&C 128:16 — "1 Corinthians 15: 29" -> "1 Corinthians 15:29"
-    - D&C 130:3 — "John 14: 23" -> "John 14:23"
-    - D&C 130:10 — "Revelation 2: 17" -> "Revelation 2:17"
-    - D&C 132:55 — "hundredfold" -> "hundred-fold"
-    - D&C 135:5 — ". . ." -> "…"
-    - D&C 138:9 — "long-suffering" -> "longsuffering"
-    - D&C 138:9 — "1 Peter 3: 18—20" -> "1 Peter 3:18–20"
-    - D&C 138:10 — "1 Peter 4: 6" -> "1 Peter 4:6"
-- Pearl of Great Price version 3
-    - Straightens curly quotes
-    - Moses 1:38 — "even so shall another come," -> "even so shall another come;"
-    - Moses 4:13 — "fig-leaves" -> "fig leaves"
-    - Moses 5:20 — "And Abel he" -> "And Abel, he"
-    - Abraham 1:5 — "My fathers having turned" -> "My fathers, having turned"
-    - JS–History 1:3 — "Vermont . . ." -> "Vermont. …"
-    - JS–History 1:27 — "twenty—first" -> "twenty-first"
-- Old Testament version 1 — initial release
-- New Testament version 1 — initial release
-- Book of Mormon flat edition version 2 — updated source to bom-4
-- Doctrine & Covenants flat edition version 2 — updated source to dc-3
-- Pearl of Great Price flat edition version 2 — updated source to pgp-3
-- Old Testament flat edition version 1 — initial release (source ot-1)
-- New Testament flat edition version 1 — initial release (source nt-1)
-- Book of Mormon reference edition version 2 — updated source to bom-4
-- Doctrine & Covenants reference edition version 2 — updated source to dc-3
-- Pearl of Great Price reference edition version 2 — updated source to pgp-3
-- Old Testament reference edition version 1 — initial release (source ot-1)
-- New Testament reference edition version 1 — initial release (source nt-1)
+* **No unified navigation** – apps must manually stitch together volumes, books, chapters, title pages,
+  testimonies, and facsimiles.
+* **Missing metadata** – introductions, signatures, “The End” markers, and facsimile explanations are not
+  normalized, so every client handles them differently (or ignores them).
+* **Inefficient querying** – JSON is great for static publishing, but bundling it in a mobile app makes
+  lookups (e.g., jump to `Mosiah 18:9`) slow and memory heavy.
+* **Inconsistent schemas across projects** – every app tends to reinvent a schema for verses, headings, and
+  metadata, making it harder to share tooling.
 
-#### 2016-10-01
+This repo **forks the upstream data** (see
+[bcbooks/scriptures-json](https://github.com/bcbooks/scriptures-json) for original files) and provides a
+generator that builds a compact, read-only SQLite asset with a consistent schema. Readers familiar with the upstream repo will see all the same text; readers coming in fresh can treat this as a self-contained dataset with ready-to-use tables.
 
-- Book of Mormon version 3
-    - Adds version information
-- Doctrine & Covenants version 2
-    - Adds version information
-    - D&C 127 — adds signature
-    - D&C 128 — adds signature
-- Pearl of Great Price version 2
-    - Adds version information
-- Book of Mormon flat edition version 1 — initial release (source bom-3)
-- Doctrine & Covenants flat edition version 1 — initial release (source dc-2)
-- Pearl of Great Price flat edition version 1 — initial release (source pgp-2)
-- Book of Mormon reference edition version 1 — initial release (source bom-3)
-- Doctrine & Covenants reference edition version 1 — initial release (source dc-2)
-- Pearl of Great Price reference edition version 1 — initial release (source pgp-2)
+## Overview
 
-#### 2016-07-31
+The package transforms the JSON volumes into a navigation-friendly database that can be embedded in
+mobile/desktop apps. It adds consistent metadata (introductions, testimonies, facsimiles, signatures, etc.) so consumers can render a unified scripture experience without bespoke parsing logic.
 
-- Doctrine & Covenants version 1 — initial release
-- Pearl of Great Price version 1 — initial release
+Some intended use cases:
 
-#### 2016-07-16
+* **Mobile scripture apps** that need fast, offline verse lookups and cross-book navigation.
+* **Textual/linguistic analysis tools** that want SQL queries instead of hand-parsed JSON.
+* **Internal study tools** where you want a stable schema that won’t change under you.
 
-- Book of Mormon version 2
-    - Removes LDS.org URLs for verses
-    - Adds `lds_slug` to volume/book
+## Source texts & copyright
 
-#### 2016-07-15
+This project does add some new textual content/editions, namely:
 
-- Book of Mormon version 1 — initial release
+- Official Declaration 1 (Non Copyrighted Portion)
+- Link to Official Declaration 2 (OD2 is still under copyright)
+- Title Page for the Holy Bible
+- Title Page for the Old Testament
+- Unified Title Page for the Book of Mormon
+- "The End" at the end of the Book of Mormon and New Testament
+- Joseph Smith's signature at the end of the Articles of Faith
+
+For details on how the rest of the text was prepared and what is included/excluded, see the upstream
+[`bcbooks/scriptures-json`](https://github.com/bcbooks/scriptures-json) documentation.
+
+## High-level pipeline
+
+1. **Source data** – the five JSON files (`old-testament.json`, `new-testament.json`, etc.) are imported
+   unchanged from the upstream repo.
+2. **Schema definition** – `generate_unified_scriptures.py` describes the SQLite schema plus enum tables
+   (chapter/content types).
+3. **Population** – the script ingests every JSON file, inserts metadata rows, and writes the SQLite file to
+   `scriptures.db` (no automatic copying into downstream apps).
+
+## Schema tour
+
+```text
+volumes(id, code, title, long_title, subtitle, short_title, lds_url, last_modified)
+books(id, volume_id, code, title, subtitle, short_title, lds_url, sort_order)
+chapters(id, book_id, number, label, chapter_type_id, sort_order)
+content(id, chapter_id, position_id, verse_number, reference, text, pilcrow, content_type_id)
+chapter_types(id, value, label)
+content_types(id, value, label)
+```
+
+### `volumes`
+* **Source fields**: `title`, `subtitle`, `subsubtitle`, `lds_slug`, `last_modified`, `version`, `the_end`
+  when available in the JSON root.
+* **Usage**: Drive top-level navigation (“Old Testament”, “New Testament”…). `code` matches the JSON file
+  key so you can filter by volume quickly.
+
+### `books`
+* **Source fields**: `book`, `full_title`, `full_subtitle`, `heading`, `lds_slug`. Only the lightweight
+  fields live on the table; rich metadata is emitted into `content`.
+* **Usage**: Provide ordering (`sort_order`) and short titles for menus. Use `books.id` to join into
+  `chapters` or to prefetch the first chapter for a given book.
+
+### `chapters`
+* **Source fields**: `chapter`, `reference`, `section`, `facsimiles[].number`, synthetic chapters for
+  introductions/testimonies.
+* **Usage**: `number` stays NULL for introductions and facsimiles. `label` is only set when a chapter has a
+  unique name (e.g., “New Testament Title Page”); otherwise you derive “Chapter N” from the `content`
+  rows. `chapter_type_id` maps to `chapter_types` so you can tell a `section` from a `facsimile`.
+
+### `content`
+This is the heart of the DB. Every verse, heading, title, introduction paragraph, signature, and facsimile
+explanation shows up here. Each row is scoped to a chapter and ordered with `position_id`.
+
+* **Source fields**:
+  * JSON verse objects → `content_type="verse"` (with `verse_number`, `reference`, `text`, `pilcrow`).
+  * Book headings/notes → `content_type="heading"` rows before the verses.
+  * Title pages / testimonies / facsimile entries come from the helper metadata defined in
+    `generate_unified_scriptures.py` (see `build_intro_chapters` and `emit_book_metadata_content`).
+  * Closing text (`The End`, signatures) gets written with `content_type="closing_text"` or
+    `"signature"`.
+  * Facsimile URLs live in `text` with `content_type="media_url"`.
+* **Usage**: Query by `chapter_id` + `ORDER BY position_id` to render an entire chapter/section exactly as a
+  reader should see it (titles → subtitles → headings → verses → metadata). To look up a verse, filter on
+  `content_type_id` joined to `content_types` where `value = 'verse'` and match `reference` or
+  (`chapter_id`, `verse_number`).
+
+### Enum tables
+
+`chapter_types` and `content_types` are seeded at build time:
+
+| `chapter_types.value`        | Meaning / Source                                                                 |
+|-----------------------------|------------------------------------------------------------------------------------|
+| `chapter`                   | Standard chapter (Genesis 1, 1 Nephi 3, etc.)                                     |
+| `section`                   | Doctrine & Covenants sections (derived from `sections[].section`)                 |
+| `official_declaration`      | Official Declarations 1 & 2 (Not found in scriptures-json, additions)        |
+| `facsimile`                 | Pearl of Great Price facsimiles (chapters inserted from `facsimiles[]`)          |
+| `introduction`              | Synthetic introduction books/chapters (title pages, testimonies, etc.)           |
+
+`content_types` captures every block that can appear in reading order:
+
+| `content_types.value`             | Example source                              | Notes                                                              |
+|--------------------|---------------------------------------------|--------------------------------------------------------------------|
+| `verse`            | `verses[].text`                             | Includes `verse_number`, `reference`, `pilcrow` flags              |
+| `paragraph`        | Intro paragraphs, facsimile explanations    | Text-only rows; no verse refs                                      |
+| `title`            | Title pages, book titles                    | Often emitted before the first chapter of a book                   |
+| `subtitle`         | Subtitle lines from title pages             | e.g., “Another Testament of Jesus Christ”                          |
+| `subsubtitle`      | Additional title-page lines (“THE”, “THE HAND OF…”) |
+| `chapter_name`     | “Chapter 9”, “Section 115”, “A Facsimile…”  | Always the first element within a chapter                          |
+| `heading`          | Chapter headings/notes from JSON            | Includes psalm headings, BOM chapter headings, etc.                |
+| `psalm_119_name`   | Psalm 119 Hebrew section names (`heading`)  | Matches JSON `heading` for verses that include `pilcrow` sections  |
+| `psalm_119_heading`| Psalm 119 subheadings (`subheading`)        | Rare field used in OT JSON                                         |
+| `media_url`        | Facsimile image URLs                        | Stored as plain text URL                                           |
+| `signature`        | D&C signatures, witness names, Articles of Faith closing |
+| `closing_text`     | “The End” (OT/NT/BOM)                       | Appended to the final chapter of a volume                          |
+| `space`            | Layout spacer in title pages                | Handy for rendering blank lines                                    |
+
+## Usage
+
+### Prerequisites
+
+* Python 3 (uses stdlib only)
+* The JSON files from `bcbooks/scriptures-json` copied into this directory
+
+### Generate the database
+
+```bash
+python3 generate_unified_scriptures.py           # writes scriptures.db
+python3 generate_unified_scriptures.py --output ./my_scriptures.db
+```
+
+The script applies the schema and populates the tables. On success you’ll see a summary line with record
+counts.
+
+### Validating the output
+
+```bash
+sqlite3 scriptures.db ".tables"
+sqlite3 scriptures.db "SELECT COUNT(*) FROM verses_view;"  # optional view
+# e.g., inspect Genesis 1 metadata:
+sqlite3 scriptures.db "
+  SELECT ct.value, c.text
+  FROM content c
+  JOIN content_types ct ON ct.id = c.content_type_id
+  WHERE chapter_id = (
+    SELECT id FROM chapters
+    JOIN books ON books.id = chapters.book_id
+    WHERE books.code = 'gen'
+    ORDER BY chapters.sort_order
+    LIMIT 1
+  )
+  ORDER BY position_id;
+"
+```
+
+### Extending / customizing
+
+* **Additional metadata:** Add new `content_type` rows and extend
+  `emit_book_metadata_content` / `emit_intro_content` to produce them.
+* **Alternate formats:** Duplicate the generator and swap the SQL DDL for MySQL/Postgres, or emit
+  CSV/Parquet after the `ScriptureDatabaseBuilder` populates its internal counters.
+* **Filtering volumes:** Use the `--volumes` flag (coming soon) or modify `JSON_SOURCES` to limit the input
+  set.
+
+## Acknowledgements
+
+Huge thanks to [Ben Crowder](https://github.com/bencrowder) for creating and maintaining
+[`bcbooks/scriptures-json`](https://github.com/bcbooks/scriptures-json). This project is only possible
+because of that meticulous work; all credit for the underlying text and JSON structure belongs there.
+
+## Contributing
+
+1. Fork the repo (or keep a subtree) and run the generator locally.
+2. Open PRs with schema/docs improvements or updated JSON sources.
+3. Please attribute `bcbooks/scriptures-json` when redistributing derivative DBs.
+
+## License
+
+The upstream JSON files are public domain (per `bcbooks/scriptures-json`). All generator code in this repo
+is released under the MIT License.
