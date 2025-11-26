@@ -81,7 +81,7 @@ For details on how the rest of the text was prepared and what is included/exclud
 
 1. **Source data** – the five JSON files (`old-testament.json`, `new-testament.json`, etc.) are imported
    unchanged from the upstream repo.
-2. **Schema definition** – `generate_unified_scriptures.py` describes the SQLite schema plus enum tables
+2. **Schema definition** – `scripts/generate-sqlite.py` describes the SQLite schema plus enum tables
    (chapter/content types).
 3. **Population** – the script ingests every JSON file, inserts metadata rows, and writes the SQLite file to
    `scriptures.db` (no automatic copying into downstream apps).
@@ -124,7 +124,7 @@ explanation shows up here. Each row is scoped to a chapter and ordered with `pos
   * JSON verse objects → `content_type="verse"` (with `verse_number`, `reference`, `text`, `pilcrow`).
   * Book headings/notes → `content_type="heading"` rows before the verses.
   * Title pages / testimonies / facsimile entries come from the helper metadata defined in
-    `generate_unified_scriptures.py` (see `build_intro_chapters` and `emit_book_metadata_content`).
+    `scripts/generate-sqlite.py` (see `build_intro_chapters` and `emit_book_metadata_content`).
   * Closing text (`The End`, signatures) gets written with `content_type="closing_text"` or
     `"signature"`.
   * Facsimile URLs live in `text` with `content_type="media_url"`.
@@ -173,8 +173,8 @@ explanation shows up here. Each row is scoped to a chapter and ordered with `pos
 ### Generate the database
 
 ```bash
-python3 generate_unified_scriptures.py           # writes scriptures.db
-python3 generate_unified_scriptures.py --output ./my_scriptures.db
+python3 scripts/generate-sqlite.py           # writes scriptures.db
+python3 scripts/generate-sqlite.py --output ./my_scriptures.db
 ```
 
 The script applies the schema and populates the tables. On success you’ll see a summary line with record
