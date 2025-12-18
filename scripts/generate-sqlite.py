@@ -3,9 +3,9 @@
 
 Tables
 ------
-volumes(id, code, title, long_title, subtitle, short_title, lds_url, last_modified)
-books(id, volume_id, code, title, subtitle, short_title, lds_url, sort_order)
-chapters(id, book_id, number, label, chapter_type_id, sort_order)
+volumes(id, code, title, long_title, subtitle, short_title, lds_url)
+books(id, volume_id, title, long_title, subtitle, lds_url)
+chapters(id, book_id, number, label, chapter_type_id)
 content(id, chapter_id, position_id, verse_number, reference, text, pilcrow, content_type_id)
 
 Enum helpers
@@ -18,6 +18,7 @@ content_types(id, value, label) : verse, paragraph, title, subtitle, subsubtitle
 
 from __future__ import annotations
 
+from datetime import datetime
 import argparse
 import json
 import sqlite3
@@ -70,6 +71,11 @@ def load_payloads() -> Dict[str, Dict[str, Any]]:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
+    # Schema plus navigation indexes tuned for common queries:
+    # - precomputed content id ranges per chapter/book/volume
+    # - content by chapter (and verse ranges)
+    # - chapters by book
+    # - books by volume
     conn.executescript(
         """
         PRAGMA foreign_keys = ON;
@@ -88,36 +94,34 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS volumes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT NOT NULL UNIQUE,
             title TEXT NOT NULL,
             long_title TEXT,
             subtitle TEXT,
             short_title TEXT,
             lds_url TEXT,
-            last_modified TEXT
+            content_start_id INTEGER NOT NULL DEFAULT -1,
+            content_end_id INTEGER NOT NULL DEFAULT -1
         );
 
         CREATE TABLE IF NOT EXISTS books (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             volume_id INTEGER NOT NULL REFERENCES volumes(id) ON DELETE CASCADE,
-            code TEXT NOT NULL,
             title TEXT NOT NULL,
+            long_title TEXT NOT NULL,
             subtitle TEXT,
-            short_title TEXT,
             lds_url TEXT,
-            sort_order INTEGER NOT NULL,
-            UNIQUE(volume_id, sort_order),
-            UNIQUE(volume_id, code)
+            content_start_id INTEGER NOT NULL DEFAULT -1,
+            content_end_id INTEGER NOT NULL DEFAULT -1
         );
 
         CREATE TABLE IF NOT EXISTS chapters (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
             number INTEGER,
-            label TEXT,
+            label TEXT NOT NULL,
             chapter_type_id INTEGER REFERENCES chapter_types(id),
-            sort_order INTEGER NOT NULL,
-            UNIQUE(book_id, sort_order)
+            content_start_id INTEGER NOT NULL DEFAULT -1,
+            content_end_id INTEGER NOT NULL DEFAULT -1
         );
 
         CREATE TABLE IF NOT EXISTS content (
@@ -127,10 +131,22 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             verse_number INTEGER,
             reference TEXT,
             text TEXT,
-            pilcrow INTEGER NOT NULL DEFAULT 0,
+            pilcrow BOOLEAN NOT NULL DEFAULT FALSE,
             content_type_id INTEGER NOT NULL REFERENCES content_types(id),
             UNIQUE(chapter_id, position_id)
         );
+
+        CREATE INDEX IF NOT EXISTS idx_books_volume_id
+          ON books(volume_id);
+
+        CREATE INDEX IF NOT EXISTS idx_chapters_book_id
+          ON chapters(book_id);
+
+        CREATE INDEX IF NOT EXISTS idx_content_chapter_id
+          ON content(chapter_id);
+
+        CREATE INDEX IF NOT EXISTS idx_content_chapter_id_verse
+          ON content(chapter_id, verse_number);
         """
     )
     conn.executemany(
@@ -151,23 +167,37 @@ def enum_lookup(conn: sqlite3.Connection, table: str) -> Dict[str, int]:
 def insert_volume(
     conn: sqlite3.Connection,
     *,
-    code: str,
     payload: Dict[str, Any],
-    title_override: Optional[str] = None,
 ) -> int:
+    title = "Error" # should be set later to remove error
+    short_title = "Error"
+    match payload.get("title"):
+        case "The Old Testament":
+            title = "Old Testament"
+            short_title = "OT"
+        case "The New Testament":
+            title = "New Testament"
+            short_title = "NT"
+        case "The Book of Mormon":
+            title = "Book of Mormon"
+            short_title = "BoM"
+        case "The Doctrine and Covenants":
+            title = "Doctrine and Covenants"
+            short_title = "D&C"
+        case "The Pearl of Great Price":
+            title = "Pearl of Great Price"
+            short_title = "PGP"
     conn.execute(
         """
-        INSERT INTO volumes (code, title, long_title, subtitle, short_title, lds_url, last_modified)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO volumes (title, long_title, subtitle, short_title, lds_url)
+        VALUES (?, ?, ?, ?, ?)
         """,
         (
-            code,
-            title_override or payload.get("title") or code.title(),
+            title,
             payload.get("title"),
             payload.get("subtitle"),
+            short_title,
             payload.get("lds_slug"),
-            payload.get("lds_slug"),
-            payload.get("last_modified"),
         ),
     )
     return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -177,28 +207,23 @@ def insert_book(
     conn: sqlite3.Connection,
     volume_id: int,
     *,
-    code: str,
     title: str,
-    sort_order: int,
+    long_title: str,
     subtitle: Optional[str] = None,
-    short_title: Optional[str] = None,
     lds_url: Optional[str] = None,
 ) -> int:
     conn.execute(
         """
         INSERT INTO books (
-            volume_id, code, title, subtitle, short_title,
-            lds_url, sort_order
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            volume_id, title, long_title, subtitle, lds_url
+        ) VALUES (?, ?, ?, ?, ?)
         """,
         (
             volume_id,
-            code,
             title,
+            long_title,
             subtitle,
-            short_title,
             lds_url,
-            sort_order,
         ),
     )
     return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -211,14 +236,13 @@ def insert_chapter(
     number: Optional[int],
     label: Optional[str],
     chapter_type_id: Optional[int],
-    sort_order: int,
 ) -> int:
     conn.execute(
         """
-        INSERT INTO chapters (book_id, number, label, chapter_type_id, sort_order)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO chapters (book_id, number, label, chapter_type_id)
+        VALUES (?, ?, ?, ?)
         """,
-        (book_id, number, label, chapter_type_id, sort_order),
+        (book_id, number, label or number, chapter_type_id),
     )
     return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
@@ -247,9 +271,53 @@ def insert_content(
             verse_number,
             reference,
             text,
-            1 if pilcrow else 0,
+            pilcrow,
             content_type_id,
         ),
+    )
+
+def compute_content_ranges(conn: sqlite3.Connection) -> None:
+    """Populate precomputed content id ranges for chapters, books, and volumes."""
+    conn.executescript(
+        """
+        UPDATE chapters SET
+          content_start_id = (
+            SELECT MIN(c.id) FROM content c WHERE c.chapter_id = chapters.id
+          ),
+          content_end_id = (
+            SELECT MAX(c.id) FROM content c WHERE c.chapter_id = chapters.id
+          );
+
+        UPDATE books SET
+          content_start_id = (
+            SELECT MIN(c.id)
+            FROM chapters ch
+            JOIN content c ON c.chapter_id = ch.id
+            WHERE ch.book_id = books.id
+          ),
+          content_end_id = (
+            SELECT MAX(c.id)
+            FROM chapters ch
+            JOIN content c ON c.chapter_id = ch.id
+            WHERE ch.book_id = books.id
+          );
+
+        UPDATE volumes SET
+          content_start_id = (
+            SELECT MIN(c.id)
+            FROM books b
+            JOIN chapters ch ON ch.book_id = b.id
+            JOIN content c ON c.chapter_id = ch.id
+            WHERE b.volume_id = volumes.id
+          ),
+          content_end_id = (
+            SELECT MAX(c.id)
+            FROM books b
+            JOIN chapters ch ON ch.book_id = b.id
+            JOIN content c ON c.chapter_id = ch.id
+            WHERE b.volume_id = volumes.id
+          );
+        """
     )
 
 
@@ -280,8 +348,7 @@ def append_intro_content(
             book_id,
             number=None,
             label=chapter["title"],
-            chapter_type_id=intro_type_id,
-            sort_order=sort_idx,
+            chapter_type_id=intro_type_id
         )
         position = 0
         for entry in chapter["entries"]:
@@ -310,15 +377,12 @@ def build_database(output: Path) -> None:
         conn.execute("BEGIN")
 
         for dataset_code, payload in payloads.items():
-            volume_id = insert_volume(conn, code=dataset_code, payload=payload)
+            volume_id = insert_volume(conn, payload=payload)
             intro_book_id = insert_book(
                 conn,
                 volume_id,
-                code=f"{dataset_code}-intro",
-                title="Introduction",
-                sort_order=0,
-                subtitle=payload.get("subtitle") or payload.get("subsubtitle"),
-                short_title="Intro",
+                title="Intro",
+                long_title="Introduction",
             )
 
             intro_chapters = build_intro_chapters(dataset_code, payload)
@@ -335,11 +399,9 @@ def build_database(output: Path) -> None:
                 book_id = insert_book(
                     conn,
                     volume_id,
-                    code=book_payload["code"],
-                    title=book_payload["title"],
-                    sort_order=sort_idx,
+                    title=book_payload["book"],
+                    long_title=book_payload["title"],
                     subtitle=book_payload.get("book_subtitle") or book_payload.get("heading"),
-                    short_title=book_payload.get("book"),
                     lds_url=book_payload.get("lds_slug"),
                 )
                 ingest_book_content(
@@ -367,6 +429,9 @@ def build_database(output: Path) -> None:
                     closing_text_value,
                     content_types,
                 )
+
+        # Precompute content id ranges for fast navigation in downstream apps.
+        compute_content_ranges(conn)
 
         conn.commit()
     except Exception:
@@ -549,25 +614,21 @@ def append_official_declarations(
     book_id: int,
     *,
     chapter_types: Dict[str, int],
-    content_types: Dict[str, int],
+    content_types: Dict[str, int]
 ) -> None:
     declarations = build_official_declarations()
     if not declarations:
         return
 
     decl_type_id = chapter_types["official_declaration"]
-    start_sort = conn.execute(
-        "SELECT COALESCE(MAX(sort_order), 0) FROM chapters WHERE book_id = ?", (book_id,)
-    ).fetchone()[0]
 
     for idx, entries in enumerate(declarations, start=1):
         chapter_id = insert_chapter(
             conn,
             book_id,
             number=None,
-            label=None,
+            label=f"Official Declaration {idx}",
             chapter_type_id=decl_type_id,
-            sort_order=start_sort + idx,
         )
         position = 0
         for content_type_value, text in entries:
@@ -633,7 +694,6 @@ def ingest_book_content(
             number=chapter_payload.get("chapter"),
             label=label,
             chapter_type_id=chapter_type_id,
-            sort_order=sort_idx,
         )
         emit_book_metadata_content(
             conn,
@@ -816,7 +876,7 @@ def append_articles_of_faith_signature(
     signature_text: str = "Joseph Smith.",
 ) -> None:
     row = conn.execute(
-        "SELECT id FROM chapters WHERE book_id = ? ORDER BY sort_order DESC, id DESC LIMIT 1",
+        "SELECT id FROM chapters WHERE book_id = ? ORDER BY id DESC LIMIT 1",
         (book_id,),
     ).fetchone()
     if not row:
@@ -840,15 +900,13 @@ def ingest_facsimiles(
     chapter_types: Dict[str, int],
     content_types: Dict[str, int],
 ):
-    start_sort = 10_000
     for idx, fac in enumerate(facsimiles, start=1):
         chapter_id = insert_chapter(
             conn,
             book_id,
-            number=idx,
-            label=None,
+            number=None,
+            label=f"Facsimile {idx}",
             chapter_type_id=chapter_types["facsimile"],
-            sort_order=start_sort + idx,
         )
         chapter_stub = {
             "chapter": fac.get("number"),
@@ -917,7 +975,7 @@ def append_volume_closing_text(
         FROM chapters c
         JOIN books b ON b.id = c.book_id
         WHERE b.volume_id = ?
-        ORDER BY b.sort_order DESC, c.sort_order DESC, c.id DESC
+        ORDER BY c.id DESC
         LIMIT 1
         """,
         (volume_id,),

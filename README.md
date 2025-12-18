@@ -89,13 +89,30 @@ For details on how the rest of the text was prepared and what is included/exclud
 ## Schema tour
 
 ```text
-volumes(id, code, title, long_title, subtitle, short_title, lds_url, last_modified)
-books(id, volume_id, code, title, subtitle, short_title, lds_url, sort_order)
-chapters(id, book_id, number, label, chapter_type_id, sort_order)
+volumes(id, code, title, long_title, subtitle, short_title, lds_url, last_modified, content_start_id, content_end_id)
+books(id, volume_id, code, title, subtitle, short_title, lds_url, sort_order, content_start_id, content_end_id)
+chapters(id, book_id, number, label, chapter_type_id, sort_order, content_start_id, content_end_id)
 content(id, chapter_id, position_id, verse_number, reference, text, pilcrow, content_type_id)
 chapter_types(id, value, label)
 content_types(id, value, label)
 ```
+
+### Indexes
+
+The generator creates navigation-focused indexes:
+
+- `idx_books_volume_id` on `books(volume_id)`
+- `idx_chapters_book_id` on `chapters(book_id)`
+- `idx_content_chapter_id` on `content(chapter_id)`
+- `idx_content_chapter_id_verse` on `content(chapter_id, verse_number)`
+
+These keep chapter, book, and verse-range lookups fast without loading full tables.
+
+### Precomputed ranges
+
+Each chapter/book/volume row includes non-null `content_start_id` and
+`content_end_id` (populated by the generator) so callers can jump to content
+ranges without scanning the `content` table.
 
 ### `volumes`
 * **Source fields**: `title`, `subtitle`, `subsubtitle`, `lds_slug`, `last_modified`, `version`, `the_end`

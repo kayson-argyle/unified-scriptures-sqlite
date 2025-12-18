@@ -17,5 +17,8 @@
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/bcbooks/scriptures-json"
+	},
+	"scripts": {
+		"generate": "python3 scripts/generate-sqlite.py"
 	}
 }
