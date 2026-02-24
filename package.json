@@ -1,24 +1,16 @@
 {
-	"name": "@bencrowder/scriptures-json",
+	"name": "unified-scriptures-sqlite",
 	"version": "1.0.1",
-	"description": "LDS scriptures in JSON format",
-	"author": "Ben Crowder <ben.crowder@gmail.com> (https://bencrowder.net/)",
+	"description": "comprehensive LDS scriptures in sqlite format",
+	"author": "Kayson Argyle",
 	"keywords": [
 		"lds",
 		"mormon",
 		"scriptures"
 	],
 	"license": "CC0-1.0",
-	"bugs": {
-		"url": "https://github.com/bcbooks/scriptures-json/issues",
-		"email": "ben.crowder@gmail.com"
-	},
-	"homepage": "https://bencrowder.net/religious/scriptures-in-json/",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/bcbooks/scriptures-json"
-	},
 	"scripts": {
-		"generate": "python3 scripts/generate-sqlite.py"
+		"generate": "python3 scripts/generate-sqlite.py",
+		"copy": "cp scriptures.db ../../apps/mobile/assets/databases/scriptures.db"
 	}
 }

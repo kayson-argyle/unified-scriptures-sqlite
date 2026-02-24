@@ -13,7 +13,7 @@ Enum helpers
 chapter_types(id, value, label) : chapter, section, official_declaration, facsimile, introduction
 content_types(id, value, label) : verse, paragraph, title, subtitle, subsubtitle, signature,
                                  closing_text, chapter_name, heading, psalm_119_name,
-                                 psalm_119_heading, media_url, space
+                                 psalm_119_heading, media_binary, space, link
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ CONTENT_TYPES = [
     ("heading", "Heading"),
     ("psalm_119_name", "Psalm 119 Section Name"),
     ("psalm_119_heading", "Psalm 119 Section Heading"),
-    ("media_url", "Media URL"),
+    ("media_binary", "Media Binary"),
     ("space", "Whitespace Spacer"),
     ("link", "Link"),
 ]
@@ -100,7 +100,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             short_title TEXT,
             lds_url TEXT,
             content_start_id INTEGER NOT NULL DEFAULT -1,
-            content_end_id INTEGER NOT NULL DEFAULT -1
+            content_end_id INTEGER NOT NULL DEFAULT -1,
+            book_count INTEGER NOT NULL DEFAULT -1
         );
 
         CREATE TABLE IF NOT EXISTS books (
@@ -111,7 +112,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             subtitle TEXT,
             lds_url TEXT,
             content_start_id INTEGER NOT NULL DEFAULT -1,
-            content_end_id INTEGER NOT NULL DEFAULT -1
+            content_end_id INTEGER NOT NULL DEFAULT -1,
+            chapter_count INTEGER NOT NULL DEFAULT -1
         );
 
         CREATE TABLE IF NOT EXISTS chapters (
@@ -121,7 +123,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             label TEXT NOT NULL,
             chapter_type_id INTEGER REFERENCES chapter_types(id),
             content_start_id INTEGER NOT NULL DEFAULT -1,
-            content_end_id INTEGER NOT NULL DEFAULT -1
+            content_end_id INTEGER NOT NULL DEFAULT -1,
+            content_count INTEGER NOT NULL DEFAULT -1,
+            verse_count INTEGER NOT NULL DEFAULT -1
         );
 
         CREATE TABLE IF NOT EXISTS content (
@@ -131,8 +135,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             verse_number INTEGER,
             reference TEXT,
             text TEXT,
+            media BLOB,
             pilcrow BOOLEAN NOT NULL DEFAULT FALSE,
             content_type_id INTEGER NOT NULL REFERENCES content_types(id),
+            char_count INTEGER NOT NULL DEFAULT -1,
             UNIQUE(chapter_id, position_id)
         );
 
@@ -254,16 +260,18 @@ def insert_content(
     position_id: int,
     content_type_id: int,
     text: Optional[str] = None,
+    media: Optional[bytes] = None,
     verse_number: Optional[int] = None,
     reference: Optional[str] = None,
     pilcrow: bool = False,
 ):
+    char_count = len(text) if text else 0
     conn.execute(
         """
         INSERT INTO content (
             chapter_id, position_id, verse_number, reference, text,
-            pilcrow, content_type_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            media, pilcrow, content_type_id, char_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             chapter_id,
@@ -271,8 +279,10 @@ def insert_content(
             verse_number,
             reference,
             text,
+            media,
             pilcrow,
             content_type_id,
+            char_count,
         ),
     )
 
@@ -286,6 +296,15 @@ def compute_content_ranges(conn: sqlite3.Connection) -> None:
           ),
           content_end_id = (
             SELECT MAX(c.id) FROM content c WHERE c.chapter_id = chapters.id
+          ),
+          content_count = (
+            SELECT COUNT(*) FROM content c WHERE c.chapter_id = chapters.id
+          ),
+          verse_count = (
+            SELECT COUNT(*)
+            FROM content c
+            JOIN content_types ct ON c.content_type_id = ct.id
+            WHERE c.chapter_id = chapters.id AND ct.value = 'verse'
           );
 
         UPDATE books SET
@@ -300,6 +319,9 @@ def compute_content_ranges(conn: sqlite3.Connection) -> None:
             FROM chapters ch
             JOIN content c ON c.chapter_id = ch.id
             WHERE ch.book_id = books.id
+          ),
+          chapter_count = (
+            SELECT COUNT(*) FROM chapters ch WHERE ch.book_id = books.id
           );
 
         UPDATE volumes SET
@@ -316,6 +338,9 @@ def compute_content_ranges(conn: sqlite3.Connection) -> None:
             JOIN chapters ch ON ch.book_id = b.id
             JOIN content c ON c.chapter_id = ch.id
             WHERE b.volume_id = volumes.id
+          ),
+          book_count = (
+            SELECT COUNT(*) FROM books b WHERE b.volume_id = volumes.id
           );
         """
     )
@@ -378,21 +403,22 @@ def build_database(output: Path) -> None:
 
         for dataset_code, payload in payloads.items():
             volume_id = insert_volume(conn, payload=payload)
-            intro_book_id = insert_book(
-                conn,
-                volume_id,
-                title="Intro",
-                long_title="Introduction",
-            )
+            if dataset_code != "doctrine-and-covenants":
+                intro_book_id = insert_book(
+                    conn,
+                    volume_id,
+                    title="Intro",
+                    long_title="Introduction",
+                )
 
-            intro_chapters = build_intro_chapters(dataset_code, payload)
-            append_intro_content(
-                conn,
-                book_id=intro_book_id,
-                intro_chapters=intro_chapters,
-                chapter_types=chapter_types,
-                content_types=content_types,
-            )
+                intro_chapters = build_intro_chapters(dataset_code, payload)
+                append_intro_content(
+                    conn,
+                    book_id=intro_book_id,
+                    intro_chapters=intro_chapters,
+                    chapter_types=chapter_types,
+                    content_types=content_types,
+                )
 
             books_payload = normalize_books(dataset_code, payload)
             for sort_idx, book_payload in enumerate(books_payload, start=1):
@@ -500,11 +526,11 @@ def build_intro_chapters(dataset_code: str, payload: Dict[str, Any]) -> List[Dic
                 "The Lord of heaven and earth bless Your Majesty with many and happy days, that, as his heavenly hand hath enriched Your Highness with many singular and extraordinary graces, so You may be the wonder of the world in this latter age for happiness and true felicity, to the honour of that great GOD, and the good of his Church, through Jesus Christ our Lord and only Saviour.",
             )
         )
-        chapters.append({"title": "Old Testament Title Page", "entries": ot_entries})
+        chapters.append({"title": "Title Page", "entries": ot_entries})
     elif dataset_code == "new-testament":
         chapters.append(
             {
-                "title": "New Testament Title Page",
+                "title": "Title Page",
                 "entries": [
                     entry("subsubtitle", "THE"),
                     entry("title", "NEW TESTAMENT"),
@@ -543,7 +569,7 @@ def build_intro_chapters(dataset_code: str, payload: Dict[str, Any]) -> List[Dic
             ),
             entry("signature", "TRANSLATED BY JOSEPH SMITH, Jun."),
         ]
-        chapters.append({"title": "Book of Mormon Title Page", "entries": bom_entries})
+        chapters.append({"title": "Title Page", "entries": bom_entries})
         for testimony in payload.get("testimonies", []):
             entries = [
                 entry("chapter_name", testimony.get("title")),
@@ -555,7 +581,7 @@ def build_intro_chapters(dataset_code: str, payload: Dict[str, Any]) -> List[Dic
     elif dataset_code == "doctrine-and-covenants":
         chapters.append(
             {
-                "title": "Doctrine and Covenants Title Page",
+                "title": "Title Page",
                 "entries": [
                     entry("subsubtitle", "THE"),
                     entry("title", "DOCTRINE AND COVENANTS"),
@@ -572,7 +598,7 @@ def build_intro_chapters(dataset_code: str, payload: Dict[str, Any]) -> List[Dic
     elif dataset_code == "pearl-of-great-price":
         chapters.append(
             {
-                "title": "Pearl of Great Price Title Page",
+                "title": "Title Page",
                 "entries": [
                     entry("subsubtitle", "THE"),
                     entry("title", "PEARL OF GREAT PRICE"),
@@ -644,12 +670,22 @@ def append_official_declarations(
 
 def normalize_books(dataset_code: str, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     if dataset_code == "doctrine-and-covenants":
+        intro_chapters = build_intro_chapters(dataset_code, payload)
+        prepended_chapters = [
+            {
+                "label": intro["title"],
+                "_chapter_type": "introduction",
+                "entries": intro["entries"],
+            }
+            for intro in intro_chapters
+        ]
+
         sections = payload.get("sections") or []
         synthetic_book = {
             "code": "dc",
             "title": payload.get("title", "Doctrine and Covenants"),
             "book": payload.get("title"),
-            "chapters": [
+            "chapters": prepended_chapters + [
                 {
                     "chapter": section.get("section"),
                     "section": section.get("section"),
@@ -707,6 +743,19 @@ def ingest_book_content(
         emit_chapter_heading_and_notes(
             conn, chapter_id, chapter_payload, content_types=content_types
         )
+
+        if chapter_payload.get("entries"):
+            position = chapter_id_content_position(conn, chapter_id)
+            for entry in chapter_payload["entries"]:
+                position += 1
+                insert_content(
+                    conn,
+                    chapter_id,
+                    position_id=position,
+                    content_type_id=content_types[entry["type"]],
+                    text=entry.get("text"),
+                )
+
         emit_verses(conn, chapter_id, chapter_payload.get("verses") or [], content_types)
 
         signature = chapter_payload.get("signature")
@@ -924,13 +973,28 @@ def ingest_facsimiles(
             content_types=content_types,
         )
         position = chapter_id_content_position(conn, chapter_id)
-        if fac.get("image_url"):
+        
+        # Read and embed the PNG file as binary data
+        facsimile_path = ROOT / "facsimiles" / f"facsimile_{idx}.png"
+        if facsimile_path.exists():
+            position += 1
+            with facsimile_path.open("rb") as img_file:
+                binary_data = img_file.read()
+            insert_content(
+                conn,
+                chapter_id,
+                position_id=position,
+                content_type_id=content_types["media_binary"],
+                media=binary_data,
+            )
+        elif fac.get("image_url"):
+            # Fallback to URL if PNG file doesn't exist (for backwards compatibility)
             position += 1
             insert_content(
                 conn,
                 chapter_id,
                 position_id=position,
-                content_type_id=content_types["media_url"],
+                content_type_id=content_types["media_binary"],
                 text=fac["image_url"],
             )
         for explanation in fac.get("explanations") or []:
